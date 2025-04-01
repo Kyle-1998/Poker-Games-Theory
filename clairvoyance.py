@@ -5,7 +5,7 @@ from game_trainer.games import game, game_node, utility_node
 NUM_ACTIONS = 4
 NUM_PLAYERS = 2
 ACTION_MAP = ['Check', 'Bet', 'Call', 'Fold']
-CARDS = ['Q', 'K', 'A']
+DEFAULT_CARDS = ['Q', 'K', 'A']
 DEFAULT_ANTE = 1
 DEFAULT_BET_SIZE = 1
 
@@ -26,11 +26,11 @@ class Clairvoyance(game.Game):
     '''
     Clairvoyance game, as described in Brokos, A. (2019). Play Optimal Poker. p.44.
     '''
-    def __init__(self, ante=DEFAULT_ANTE, bet_size=DEFAULT_BET_SIZE):
+    def __init__(self, ante=DEFAULT_ANTE, bet_size=DEFAULT_BET_SIZE, player1_cards=DEFAULT_CARDS, player2_cards=DEFAULT_CARDS):
         super().__init__(NUM_ACTIONS, NUM_PLAYERS, ACTION_MAP)
-        self.cards = CARDS
         self.ante = ante
         self.bet_size = bet_size
+        self.cards = [player1_cards, player2_cards]
        
     def is_chance_node(self, history):
         '''
@@ -56,7 +56,7 @@ class Clairvoyance(game.Game):
 
         return False
 
-    def handle_chance(self, history, sample=False):
+    def handle_chance(self, player, history, sample=False):
         '''
         A helper function that handles behavior at a given chance node. Returns a list of chance outcomes and a list of
         probabilities corresponding to each of those outcomes. If sample is false, all possible actions at that chance
@@ -65,12 +65,18 @@ class Clairvoyance(game.Game):
         chance_outcomes = []
         chance_probs = []
 
-        player1_card = 'K' # always deal king to player 1
+        if len(history) == 0:
+            opponent_card = None
+        else:
+            opponent_card = history[-1][1]
 
-        for card in CARDS:
-            if card != player1_card:
-                chance_outcomes.append(card)
-                chance_probs.append(1 / 2)
+        available_cards = list(self.cards[player])
+        if opponent_card in available_cards:
+            available_cards.remove(opponent_card)
+
+        for card in available_cards:
+            chance_outcomes.append(card)
+            chance_probs.append(1 / len(available_cards))
                 
         return chance_outcomes, chance_probs
 
@@ -85,11 +91,10 @@ class Clairvoyance(game.Game):
 
         return pot
     
-    def get_terminal_utility(self, history, pot):
+    def get_terminal_utility(self, player, history, pot):
         '''
         Returns the utility at a terminal node for the player who just acted.
         '''
-        player = self.get_player(history)
         opp_player = (player + 1) % 2
 
         player_card = history[0 + player][1]
@@ -98,11 +103,10 @@ class Clairvoyance(game.Game):
         if history[-1][1] == 3: # The last player folded
             if history[-1][0] == player:
                 return -pot
-
             return pot
 
         else:
-            if CARDS.index(player_card) > CARDS.index(opp_player_card):
+            if DEFAULT_CARDS.index(player_card) > DEFAULT_CARDS.index(opp_player_card):
                 return pot
             else:
                 return -pot
@@ -131,7 +135,7 @@ class Clairvoyance(game.Game):
         '''
         Returns the identifier of the player who acts in this state.
         '''
-        if len(history) == 0:
+        if history == []:
             return 0
 
         last_turn = history[-1]
@@ -150,32 +154,39 @@ class Clairvoyance(game.Game):
         infoset = card
 
         for action in history:
-            if action[0] != 'r':
+            if action[1] not in list(set(self.cards[0] + self.cards[1])):
                 infoset += '-' + str(action[1])
 
         return infoset
 
-    def build_game_tree(self, history=[]):
+    def build_game_tree(self, history=None):
         '''
         Recursively builds a game tree consisting of GameNode objects.
         '''
+        if history is None:
+            history = []
         player = self.get_player(history)
         is_chance_node = self.is_chance_node(history)
         is_terminal_node = self.is_terminal_node(history)
-
+        
         if is_terminal_node:
             pot = self.calculate_pot(history)
-            terminal_utility = self.get_terminal_utility(history, pot)
+            terminal_utility = self.get_terminal_utility(player, history, pot)
             utility_node = Utility(terminal_utility)
+
+            card_history = history[0:2]
+            decision_history = history[2:]
+            formatted_history = "Cards: " + str([f"{card[0]}: {card[1]}" for card in card_history]).ljust(20) + " Actions: " + str([f"{action[0]}: {ACTION_MAP[action[1]]:<5}" for action in decision_history]).ljust(40)
+            formatted_payoffs = f" Payoffs: [0: {terminal_utility * (-1)**(len(history)%2):>2}, 1: {-terminal_utility * (-1)**(len(history)%2):>2}]"
+            print(f"{str(formatted_history):<54}{formatted_payoffs}")
 
             return game_node.GameNode(history, player, is_terminal_node=True, terminal_utility=utility_node)
 
         elif is_chance_node:
-            chance_outcomes, chance_probs = self.handle_chance(history)
+            chance_outcomes, chance_probs = self.handle_chance(player, history)
             next_nodes = []
-            history = [('r', 'K')] # deal to player 1
             for outcome in chance_outcomes:
-                next_history = history + [('r', outcome)]
+                next_history = history + [(player, outcome)]
                 next_nodes.append(self.build_game_tree(history=next_history))
 
             return game_node.GameNode(history, player, next_nodes, is_chance_node=True, chance_outcomes=chance_outcomes, chance_probs=chance_probs)
@@ -190,6 +201,31 @@ class Clairvoyance(game.Game):
 
             return game_node.GameNode(history, player, next_nodes, available_actions)
         
+    def define_nash_equilibrium(self, pot, bet_size):
+        """
+        Returns the Nash equilibrium strategies for the Clairvoyance game.
+        
+        IP bluffing frequency at point of EV indifference for OOP:
+        EV(Call) = P(bluff) * (pot + bet) - P(value) * (-bet)
+        P(value) = 1 - P(bluff)
+        EV(Call) = 0 at equilibrium
+        P(bluff) = bet / (pot + bet)
+        
+        OOP calling frequency at point of EV indifference for IP:
+        EV(Bluff) = P(fold) * pot - P(call) * (-bet)
+        P(call) = 1 - P(fold)
+        EV(bluff) = 0 at equilibrium
+        P(fold) = 1 - (Bet/(Bet + Pot))
+        
+        Returns:
+            list: A list of optimal %'s for each player
+        """
+        
+        return [
+            bet_size / (pot + bet_size),  # IP bluffing frequency
+            1 - (bet_size / (pot + bet_size))  # OOP calling frequency
+        ]
+       
     def get_metrics(self, infosets, expected_game_value, iteration):
         """
         Extracts relevant metrics for plotting from the current infosets.
@@ -229,10 +265,14 @@ class Clairvoyance(game.Game):
         call_freq = sum(call_values) / len(call_values) if call_values else 0
         utility = expected_game_value / iteration
         
+        eq_bluff_freq, eq_call_freq = self.define_nash_equilibrium(2 * self.ante, self.bet_size)
+        
         return {
             'iteration': iteration,
             'bluff_freq': bluff_freq,
+            'eq_bluff_freq': eq_bluff_freq,
             'call_freq': call_freq,
+            'eq_call_freq': eq_call_freq,
             'expected_value_p1': utility,
             'expected_value_p2': -utility
         }
@@ -251,7 +291,9 @@ class Clairvoyance(game.Game):
                     "title": "Equilibrium Frequencies",
                     "series": [
                         {"metric": "bluff_freq", "name": "IP Bluffing Frequency", "color": "cyan"},
-                        {"metric": "call_freq", "name": "OOP Calling Frequency", "color": "orange"}
+                        {"metric": "eq_bluff_freq", "name": "Optimal Bluffing Frequency", "color": "darkred"},
+                        {"metric": "call_freq", "name": "OOP Calling Frequency", "color": "orange"},
+                        {"metric": "eq_call_freq", "name": "Optimal Calling Frequency", "color": "darkred"},
                     ]
                 },
                 {

@@ -36,9 +36,11 @@ class Trainer:
         infosets = {}
         expected_game_value = 0  # The expected value the player will win following the nash equilibrium (average strategy)
         traverser = 0
+        print("\nGame Tree:")
         starting_node = self.game.build_game_tree()  # The GameNode object representing the root of the game tree
         metrics_history = []  # To record metrics over iterations.
 
+        print("\nTraining...")
         for i in tqdm(range(iterations)):
             reach_probs = np.ones(self.game.num_players)
             chance_prob = 1
@@ -88,15 +90,20 @@ class Trainer:
         '''
         utility = expected_game_value / num_iterations
 
+        print('\nResults:')
         print('Iteration: ', num_iterations)
         print('Player 1 Expected Value: ', "{0:,.2f}".format(utility))
         print('Player 2 Expected Value: ', "{0:,.2f}".format(-utility))
-        print()
+        print('\nEquilibrium Strategies:')
 
         action_map = self.game.action_map
-
+   
         for _, infoset in infosets.items():
             strategy = infoset.get_average_strategy()
-            print(infoset.key, [action_map[i] + ': ' + "{0:,.2f}".format(strategy[np.where(infoset.available_actions == i)][0]) for i in infoset.available_actions])
+            replaced_key = '-'.join(
+                action_map[int(part)] if part.isdigit() and int(part) < len(action_map) else part
+                for part in infoset.key.split('-')
+            )
+            print(replaced_key, [action_map[i] + ': ' + "{0:,.2f}".format(strategy[np.where(infoset.available_actions == i)][0]) for i in infoset.available_actions])
 
         print()

@@ -67,12 +67,8 @@ def cfr(game, game_node, infosets, reach_probs, chance_prob, iteration):
 
     util = np.sum(action_utils * strategy)
     regrets = action_utils - util
-    #opp_contribution = np.prod(reach_probs) / (reach_probs[player] if reach_probs[player] != 0 else 1)
-    #infoset.regret_sum += opp_contribution * chance_prob * regrets  # Update the regret sum
-    opp_reach = 1
-    for i in range(len(reach_probs)):
-        if i != player:
-            opp_reach *= reach_probs[i]
-    infoset.regret_sum += opp_reach * chance_prob * regrets
+    
+    opp_contribution = np.prod(reach_probs) / (reach_probs[player] if reach_probs[player] != 0 else 1)
+    infoset.regret_sum += opp_contribution * chance_prob * regrets  # Update the regret sum
 
     return util
